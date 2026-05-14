@@ -28,7 +28,7 @@ USAGE
 import math
 import re
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -47,6 +47,7 @@ SOCRATA_URL  = "https://data.transportation.gov/resource/qh9u-swkp.json"
 PAGE_SIZE    = 50_000
 INSERT_BATCH = 1000
 TABLE        = "insurance_history"
+DATES_PER_IN = 800   # how many MM/DD/YYYY values to pack into one SoQL IN clause
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -224,27 +225,65 @@ def fetch_page(session, where, limit, offset):
     raise RuntimeError(f"Socrata fetch failed: {last_err}")
 
 
-def iter_rows(date_start: str, date_end: str):
-    where = f"trans_date >= '{date_start}' AND trans_date <= '{date_end}'"
-    s = requests.Session()
-    total = fetch_count(s, where)
-    print(f"Socrata reports {total:,} rows for trans_date in [{date_start}, {date_end}].",
-          flush=True)
+# trans_date on the API side is text MM/DD/YYYY.  A bare
+# `trans_date >= '08/14/2023' AND trans_date <= '08/17/2023'` is a *lexical*
+# string compare, so '08/14/2024' satisfies it too (because '4' > '3'),
+# pulling in every year whose MM/DD falls in the window.  To filter by a
+# real calendar range we enumerate every MM/DD/YYYY in [start, end] and
+# use SoQL `trans_date IN (...)`.
+
+def _parse_mdY(s: str) -> date:
+    return datetime.strptime(s, "%m/%d/%Y").date()
+
+
+def enumerate_dates(date_start: str, date_end: str) -> List[str]:
+    d0 = _parse_mdY(date_start)
+    d1 = _parse_mdY(date_end)
+    if d1 < d0:
+        raise ValueError(f"end {date_end} is before start {date_start}")
+    out: List[str] = []
+    cur = d0
+    while cur <= d1:
+        out.append(cur.strftime("%m/%d/%Y"))
+        cur += timedelta(days=1)
+    return out
+
+
+def build_where(dates: List[str]) -> str:
+    quoted = ", ".join("'" + d + "'" for d in dates)
+    return f"trans_date IN ({quoted})"
+
+
+def _iter_chunk(session: requests.Session, where: str, label: str):
+    total = fetch_count(session, where)
+    print(f"  [{label}] Socrata reports {total:,} rows", flush=True)
     if total == 0:
         return
     fetched = 0
     offset  = 0
     while fetched < total:
-        page = fetch_page(s, where, PAGE_SIZE, offset)
+        page = fetch_page(session, where, PAGE_SIZE, offset)
         if not page:
             break
         for row in page:
             yield row
         fetched += len(page)
         offset  += len(page)
-        print(f"  fetched {fetched:,}/{total:,} rows", flush=True)
         if len(page) < PAGE_SIZE:
             break
+
+
+def iter_rows(date_start: str, date_end: str):
+    """Yield every API row whose trans_date is a real calendar date in [start, end]."""
+    dates = enumerate_dates(date_start, date_end)
+    print(f"Real-date range: {len(dates)} day(s) from {date_start} to {date_end}", flush=True)
+    s = requests.Session()
+    # Chunk the IN list so the URL stays under any reasonable size limit.
+    for i in range(0, len(dates), DATES_PER_IN):
+        chunk = dates[i:i + DATES_PER_IN]
+        where = build_where(chunk)
+        label = f"{chunk[0]}…{chunk[-1]}" if len(chunk) > 1 else chunk[0]
+        yield from _iter_chunk(s, where, label)
 
 
 # ────────────────────────────────────────────────────────────────────────────
