@@ -33,6 +33,15 @@ import requests
 import psycopg2
 import psycopg2.extras
 
+# ============================================================================
+#  USER SETTINGS  ──  edit these to point at your DB / change the date range
+# ============================================================================
+DATE_START = "2026-04-01"            # add_date >= this (YYYY-MM-DD)
+DATE_END   = "2026-05-31"            # add_date <= this (YYYY-MM-DD)
+DB_URL     = "postgresql://postgres:XZmPgLxtDkRnJpwgWACsSMvejgRuSlKJ@switchyard.proxy.rlwy.net:57301/railway"
+APP_TOKEN  = ""                       # optional Socrata token (raises rate limit)
+# ============================================================================
+
 SOCRATA_URL  = "https://data.transportation.gov/resource/az4n-8mr2.json"
 PAGE_SIZE    = 50_000
 INSERT_BATCH = 500
@@ -405,15 +414,9 @@ def main(date_start: str, date_end: str, db_url: str, app_token: str = "") -> Di
 if __name__ == "__main__":
     import argparse, os
     ap = argparse.ArgumentParser(description="FMCSA Socrata → new_ventures loader")
-    ap.add_argument("--start", required=True, help="YYYY-MM-DD (inclusive)")
-    ap.add_argument("--end",   required=True, help="YYYY-MM-DD (inclusive)")
-    ap.add_argument(
-        "--db",
-        default=os.environ.get(
-            "DB_URL",
-            "postgresql://postgres:XZmPgLxtDkRnJpwgWACsSMvejgRuSlKJ@switchyard.proxy.rlwy.net:57301/railway",
-        ),
-    )
-    ap.add_argument("--app-token", default=os.environ.get("SOCRATA_APP_TOKEN", ""))
+    ap.add_argument("--start", default=DATE_START, help="YYYY-MM-DD (inclusive)")
+    ap.add_argument("--end",   default=DATE_END,   help="YYYY-MM-DD (inclusive)")
+    ap.add_argument("--db",    default=os.environ.get("DB_URL", DB_URL))
+    ap.add_argument("--app-token", default=os.environ.get("SOCRATA_APP_TOKEN", APP_TOKEN))
     args = ap.parse_args()
     main(args.start, args.end, args.db, args.app_token)
