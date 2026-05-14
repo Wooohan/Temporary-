@@ -23,6 +23,7 @@ USAGE
     main("2026-04-01", "2026-05-31",
          "postgresql://postgres:****@switchyard.proxy.rlwy.net:57301/railway")
 """
+
 import json
 import math
 import time
@@ -39,7 +40,6 @@ import psycopg2.extras
 DATE_START = "2026-04-01"            # add_date >= this (YYYY-MM-DD)
 DATE_END   = "2026-05-31"            # add_date <= this (YYYY-MM-DD)
 DB_URL     = "postgresql://postgres:XZmPgLxtDkRnJpwgWACsSMvejgRuSlKJ@switchyard.proxy.rlwy.net:57301/railway"
-APP_TOKEN  = ""                       # optional Socrata token (raises rate limit)
 # ============================================================================
 
 SOCRATA_URL  = "https://data.transportation.gov/resource/az4n-8mr2.json"
@@ -304,6 +304,7 @@ def fetch_count(session: requests.Session, where: str) -> int:
     return int(data[0].get("count") or 0) if data else 0
 
 
+
 def fetch_page(session, where, limit, offset):
     params = {"$where": where, "$limit": limit, "$offset": offset, "$order": "dot_number"}
     last_err = None
@@ -320,11 +321,9 @@ def fetch_page(session, where, limit, offset):
     raise RuntimeError(f"Socrata fetch failed: {last_err}")
 
 
-def iter_rows(date_start: str, date_end: str, app_token: str = ""):
+def iter_rows(date_start: str, date_end: str):
     where = f"add_date between '{date_start}T00:00:00' and '{date_end}T23:59:59'"
     s = requests.Session()
-    if app_token:
-        s.headers["X-App-Token"] = app_token
     total = fetch_count(s, where)
     print(f"Socrata reports {total:,} rows for add_date in [{date_start}, {date_end}].",
           flush=True)
@@ -349,7 +348,7 @@ def iter_rows(date_start: str, date_end: str, app_token: str = ""):
 #  MAIN
 # ────────────────────────────────────────────────────────────────────────────
 
-def main(date_start: str, date_end: str, db_url: str, app_token: str = "") -> Dict[str, int]:
+def main(date_start: str, date_end: str, db_url: str) -> Dict[str, int]:
     t0 = time.time()
     print("=== FMCSA → new_ventures loader ===")
     print(f"Range: {date_start} → {date_end}")
@@ -358,7 +357,7 @@ def main(date_start: str, date_end: str, db_url: str, app_token: str = "") -> Di
     transformed = []
     skipped = 0
     fetched_total = 0
-    for row in iter_rows(date_start, date_end, app_token):
+    for row in iter_rows(date_start, date_end):
         fetched_total += 1
         vals = transform_row(row, scrape_date)
         if vals is None:
@@ -411,12 +410,26 @@ def main(date_start: str, date_end: str, db_url: str, app_token: str = "") -> Di
 # ────────────────────────────────────────────────────────────────────────────
 #  CLI
 # ────────────────────────────────────────────────────────────────────────────
+def _running_in_notebook() -> bool:
+    """True if executed inside a Jupyter / Colab / IPython kernel."""
+    import sys
+    return ("ipykernel" in sys.modules
+            or "google.colab" in sys.modules
+            or "IPython" in sys.modules)
+
+
 if __name__ == "__main__":
-    import argparse, os
-    ap = argparse.ArgumentParser(description="FMCSA Socrata → new_ventures loader")
-    ap.add_argument("--start", default=DATE_START, help="YYYY-MM-DD (inclusive)")
-    ap.add_argument("--end",   default=DATE_END,   help="YYYY-MM-DD (inclusive)")
-    ap.add_argument("--db",    default=os.environ.get("DB_URL", DB_URL))
-    ap.add_argument("--app-token", default=os.environ.get("SOCRATA_APP_TOKEN", APP_TOKEN))
-    args = ap.parse_args()
-    main(args.start, args.end, args.db, args.app_token)
+    import os, sys
+    if _running_in_notebook():
+        # Inside Colab / Jupyter: argparse would choke on the kernel's
+        # `-f kernel.json` arg, so we skip CLI parsing entirely and just use
+        # the constants from the USER SETTINGS block at the top of this file.
+        main(DATE_START, DATE_END, os.environ.get("DB_URL", DB_URL))
+    else:
+        import argparse
+        ap = argparse.ArgumentParser(description="FMCSA Socrata → new_ventures loader")
+        ap.add_argument("--start", default=DATE_START, help="YYYY-MM-DD (inclusive)")
+        ap.add_argument("--end",   default=DATE_END,   help="YYYY-MM-DD (inclusive)")
+        ap.add_argument("--db",    default=os.environ.get("DB_URL", DB_URL))
+        args = ap.parse_args()
+        main(args.start, args.end, args.db)
